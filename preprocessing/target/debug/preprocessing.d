@@ -1,1 +1,1 @@
-/home/madrid1/learning_rust/SHA256/preprocessing/target/debug/preprocessing: /home/madrid1/learning_rust/SHA256/preprocessing/src/main.rs
+/home/madrid1/verifiable-private-database-query/preprocessing/target/debug/preprocessing: /home/madrid1/verifiable-private-database-query/preprocessing/src/main.rs
