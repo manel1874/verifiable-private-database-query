@@ -67,7 +67,143 @@ aaaaaaaaaa,aaaaaaaaaa,aaaaaaaaaa,aaaaaaaaaa,aaaaaaaaaa
 
 ### C queries DB (Step 1)
 
+We start by importing some of the elements used by the compiler to generate an appropriate circuit for our use-case.
 
+```python
+1	########################
+2
+3	#       Imports        #
+4
+5	########################
+6
+7
+8	from circuit import Circuit
+9	from util import if_else, bit_compose
+```
+
+`Circuit`: it contains the boolean circuit used to compute SHA256.
+
+`if_else`: MP-SPDZ framework do not accept if statements under secret values because branching is not accepted by the security model of MPC. To circunvent this constraint for simple (singular) elements, MP-SPDZ accepts the following `if_else` function:
+```
+if_else(cond, a, b) = cond * (a - b) + b
+```
+where all `cond`, `a` and `b` elements can be private.
+
+`bit_compose`: Receives a list/array of bits and compose it into a number of a defined type (e.g. `sint`, `sbitint`).
+
+Example:
+
+```python
+from util import bit_compose
+
+si8 = sbitint.get_type(8)
+num_0100110 = si8(38)
+
+bits = num_0100110.bit_decompose()                  # bits = [0, 1, 1, 0, 0, 1, 0]
+
+# bit_compose compose `bits` in reversed order
+res = si8.bit_compose(bits)     					# res = 0100110 = 38
+
+
+for k in range(8):
+    print_ln("bits %s-th element = %s", k, bits[k].reveal())
+
+print_ln("res = %s", res.reveal())
+```
+
+Output:
+```python
+>>>		bits 0-th element = 0
+>>>		bits 1-th element = 1
+>>>		bits 2-th element = 1
+>>>		bits 3-th element = 0
+>>>		bits 4-th element = 0
+>>>		bits 5-th element = 1
+>>>		bits 6-th element = 0
+>>>		bits 7-th element = 0
+>>>		res = 38
+>>>		The following timing is inclusive preprocessing.
+>>>		Time = 0.00514026 seconds 
+>>>		Data sent = 0.02512 MB in ~24 rounds (party 0)
+>>>		Global data sent = 0.050256 MB (all parties)
+```
+
+To execute the first step of the protocol, we need two auxiliar function: `concatenate_to_hash` and `compute_tbl_entry_sha256`. `concatenate_to_hash` concatenates the input line from the DB table (`Array` of `sbits`) into one 512-bit element of type `sbits`. 
+
+
+```python
+################################
+
+#        Functions def         #
+
+################################
+
+
+def concatenate_to_hash(tbl_l):
+    """ Concatenate an 'Array' of 'sbits'.
+
+    Note: we assume the following parameters (hardcoded)
+        lenght of tbl_l = 64
+        length of sbits = 8 (in the implementation we use sb9 
+                             as the system considers signed
+                             numbers)
+    
+    :param tbl_l: Array of sbits.
+
+    :output: A 512-`sbits` element."""
+
+    # Step 1: initialization
+    sb512 = sbits.get_type(512)
+    bits_l = []
+
+    # Step 2: concatenate the bit decoposition of all individual 
+    # elements from tbl_l
+    for i in range(0, 64):
+        # Concatenate in reversed order
+        val = tbl_l[63-i] 
+        bits_l += val.bit_decompose()[:8]
+
+    return sb512.bit_compose(bits_l)
+
+
+def compute_tbl_entry_sha256(secret):
+    """ Compute the SHA256 of secret
+    
+    :param secret: a preprocessed element to be hashed (svi512)
+                    Preprocess: padding step.
+    """
+    
+    # Step 1: import sha256 circuit
+    sha256 = Circuit('sha256')
+
+    # Step 2: initialize state variable 
+    siv256 = sbitintvec.get_type(256)
+    state = siv256(0x6a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19)
+
+    # Step 3: run circuit
+    result = sha256(secret, state)
+    res = result.elements()[0]
+
+    # Step 4: parse res as four 64-bit sint 
+    trunc_64_0 = res.TruncPr(64,0)
+    trunc_128_64 = res.TruncPr(128,64)
+    trunc_192_128 = res.TruncPr(192,128)
+    trunc_256_192 = res.TruncPr(256,192)
+
+    sint_trunc_64_0 = sint.bit_compose(sint(trunc_64_0))
+    sint_trunc_128_64 = sint.bit_compose(sint(trunc_128_64))
+    sint_trunc_192_128 = sint.bit_compose(sint(trunc_192_128))
+    sint_trunc_256_192 = sint.bit_compose(sint(trunc_256_192))
+
+    # Step 5: save truncated result to array
+    hash_array = Array(4, sint)
+    hash_array[0] = sint_trunc_64_0
+    hash_array[1] = sint_trunc_128_64
+    hash_array[2] = sint_trunc_192_128
+    hash_array[3] = sint_trunc_256_192
+
+    return hash_array
+```
 
 
 
