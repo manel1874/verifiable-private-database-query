@@ -65,7 +65,7 @@ aaaaaaaaaa,aaaaaaaaaa,aaaaaaaaaa,aaaaaaaaaa,aaaaaaaaaa
 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 97 128 0 0 0 0 0 0 0 0 0 0 0 1 144
 ```
 
-### C queries DB (Step 1)
+### Step 1: cliente queries database owner 
 
 We start by importing some of the elements used by the compiler to generate an appropriate circuit for our use-case.
 
@@ -89,9 +89,9 @@ if_else(cond, a, b) = cond * (a - b) + b
 ```
 where all `cond`, `a` and `b` elements can be private.
 
-`bit_compose`: Receives a list/array of bits and compose it into a number of a defined type (e.g. `sint`, `sbitint`).
+`bit_compose`: Receives a list/array of bits and composes it into a number of some defined type (e.g. `sint`, `sbitint`).
 
-Example:
+Example 1:
 
 ```python
 from util import bit_compose
@@ -99,10 +99,10 @@ from util import bit_compose
 si8 = sbitint.get_type(8)
 num_0100110 = si8(38)
 
-bits = num_0100110.bit_decompose()                  # bits = [0, 1, 1, 0, 0, 1, 0]
+bits = num_0100110.bit_decompose()					# bits = [0, 1, 1, 0, 0, 1, 0]
 
 # bit_compose compose `bits` in reversed order
-res = si8.bit_compose(bits)     					# res = 0100110 = 38
+res = si8.bit_compose(bits)							# res = 0100110 = 38
 
 
 for k in range(8):
@@ -128,86 +128,221 @@ Output:
 >>>		Global data sent = 0.050256 MB (all parties)
 ```
 
-To execute the first step of the protocol, we need two auxiliar function: `concatenate_to_hash` and `compute_tbl_entry_sha256`. `concatenate_to_hash` concatenates the input line from the DB table (`Array` of `sbits`) into one 512-bit element of type `sbits`. 
+To execute the first step of the protocol, we need two auxiliar function: `concatenate_to_hash` and `compute_tbl_entry_sha256`.
 
+
+```python
+12		################################
+13
+14		#        Functions def         #
+15
+16		################################
+17
+18
+19		def concatenate_to_hash(tbl_l):
+20		    """ Concatenate an 'Array' of 'sbits'.
+21
+22		    Note: we assume the following parameters (hardcoded)
+23		        lenght of tbl_l = 64
+24		        length of sbits = 8 (in the implementation we use sb9 
+25		                             as the system considers signed
+26		                             numbers)
+27		    
+28		    :param tbl_l: Array of sbits.
+29
+30		    :output: A 512-`sbits` element."""
+31
+32		    # Step 1: initialization
+33		    sb512 = sbits.get_type(512)
+34		    bits_l = []
+35
+36		    # Step 2: concatenate the bit decoposition of all individual 
+37		    # elements from tbl_l
+38		    for i in range(0, 64):
+39		        # Concatenate in reversed order
+40		        val = tbl_l[63-i] 
+41		        bits_l += val.bit_decompose()[:8]
+42
+43		    return sb512.bit_compose(bits_l)
+```
+
+
+`concatenate_to_hash` concatenates one line from the DB table (`Array of `sbits`) into one 512-bit element of type `sbits`. We use the following elements in the function definition:
+
+- `sb512`: `sbits` with size 512 bits to save one line.
+- `bits_l`: list of bits that will be used by `bit_compose` to build a `sb512` type number from this list of numbers. Recall from `Example 1` that `bit_compose` composes in reversed order, i.e. `bits_l[0]` is the least significant bit of the returned value. Therefore, `bits_l` has to be built in reversed order (check lines 38-41).
+
+Example 2:
+
+For `tbl_l = [96, ..., 97, 98, 99]. `concatenate_to_hash(tbl_l) = 01100000...011000010110001001100011` 
+
+
+```python
+46		def compute_tbl_entry_sha256(secret):
+47		    """ Compute the SHA256 of secret
+48		    
+49		    :param secret: a preprocessed element to be hashed (svi512)
+50		                    Preprocess: padding step.
+51		    """
+52		    
+53		    # Step 1: import sha256 circuit
+54		    sha256 = Circuit('sha256')
+55
+56		    # Step 2: initialize state variable 
+57		    siv256 = sbitintvec.get_type(256)
+58		    state = siv256(0x6a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19)
+59
+60		    # Step 3: run circuit
+61		    result = sha256(secret, state)
+62		    res = result.elements()[0]
+63
+64		    # Step 4: parse res as four 64-bit sint 
+65		    trunc_64_0 = res.TruncPr(64,0)
+66		    trunc_128_64 = res.TruncPr(128,64)
+67		    trunc_192_128 = res.TruncPr(192,128)
+68		    trunc_256_192 = res.TruncPr(256,192)
+69
+70		    sint_trunc_64_0 = sint.bit_compose(sint(trunc_64_0))
+71		    sint_trunc_128_64 = sint.bit_compose(sint(trunc_128_64))
+72		    sint_trunc_192_128 = sint.bit_compose(sint(trunc_192_128))
+73		    sint_trunc_256_192 = sint.bit_compose(sint(trunc_256_192))
+74
+75		    # Step 5: save truncated result to array
+76		    hash_array = Array(4, sint)
+77		    hash_array[0] = sint_trunc_64_0
+78		    hash_array[1] = sint_trunc_128_64
+79		    hash_array[2] = sint_trunc_192_128
+80		    hash_array[3] = sint_trunc_256_192
+81
+82		    return hash_array
+```
+ 
+ `compute_tbl_entry_sha256` computes the SHA256 of some padded `secret`. It outputs an array with the output of SHA256(secret) split in four 64-bit numbers. 
+
+ Note: lines 70-73 are used to convert `sbitint` type to `sint` (check this [issue 372](https://github.com/data61/MP-SPDZ/issues/372)).
+
+ ```python
+87		########################
+88
+89		#        Input         #
+90
+91		########################
+92
+93		# Initizalize hardcoded parameters
+94		len_of_entry = 10      # Length of each entry (bytes)
+95		n_of_columns = 5       # Number of columns
+96		n_of_lines = 10        # Number of lines
+97
+98
+99		###                  Party 0                   ###
+100
+101		user_input_id = sint.get_input_from(0)
+102		user_input_column = sint.get_input_from(0)
+103
+104
+105
+106		###--------------------------------------------###
+107
+108
+109		###                  Party 1                   ###
+110
+111		sb9 = sbits.get_type(9)
+112		sb512 = sbits.get_type(512)
+113
+114		tbl = Matrix(n_of_lines, 64, sb9)
+115
+116		for i in range(0, n_of_lines):
+117		    tbl[i].input_from(1)
+118
+119		###--------------------------------------------###
+ ```
+
+Above, we take the secret inputs of Party 0 (client) and Party 1 (database owner). 
+
+- Party 0: inputs the line number (`user_input_id`) and the column number (`user_input_column`).
+- Party 1: inputs a table with 64 columns (each entry is a 8-bit element)
+
+Note: currently, the program has some hardcoded parameters such as the bit length of each entry (`len_of_entry`), the number of columns dedicated to data (`n_of_columns`) and the number of lines (`n_of_lines`).
+
+
+```python
+123		################################
+124
+125		#        Search & Hash         #
+126
+127		################################
+128
+129
+130		# Initialize types
+131		siv512 = sbitintvec.get_type(512)    
+132
+133
+134		# Initialize tmp variables
+135		tmp_lfnd = sintbit(0)  # temporary register to save line found
+136		fnl_lfnd = sintbit(0)  # final register to save line found
+137
+138		tmp_cfnd = sintbit(0)  # temporary register to save column found
+139		fnl_cfnd = sintbit(0)  # final register to save column found
+140
+141
+142		# Initialize outputs
+143		output_hash = Array(4, sint)
+144		output_query = Array(len_of_entry, sint)
+145
+146
+147		for i in range(n_of_lines):
+148		    
+149		    tmp_lfnd = i == user_input_id
+150		    fnl_lfnd = fnl_lfnd | tmp_lfnd
+151
+152		    # Compute hash of line i
+153		    line_in_bits = concatenate_to_hash(tbl[i])
+154		    secret_line_in_bits = siv512(line_in_bits)
+155		    cmp_hash = compute_tbl_entry_sha256(secret_line_in_bits)
+156
+157		    for j in range(n_of_columns):
+158
+159		        tmp_cfnd = j == user_input_column
+160		        fnl_cfnd = fnl_cfnd | tmp_cfnd
+161
+162		        match = tmp_cfnd & tmp_lfnd
+163
+164		        # Prepare output for query
+165		        for k in range(len_of_entry):
+166		            val = sint.bit_compose(sint(tbl[i][j*len_of_entry + k]))
+167		            output_query[k] = if_else(match, val, output_query[k])
+168
+169		        # Prepare output for hash
+170		        output_hash[0] = if_else(match, cmp_hash[0], output_hash[0])
+171		        output_hash[1] = if_else(match, cmp_hash[1], output_hash[1])
+172		        output_hash[2] = if_else(match, cmp_hash[2], output_hash[2])
+173		        output_hash[3] = if_else(match, cmp_hash[3], output_hash[3])
+```
+
+Between lines 130-173 we have the main part of the first step of the protocol. For every line we compute the corresponding hash using the auxiliary functions `concatenate_to_hash` (line 153) and `compute_tbl_entry_sha256` (line 155). We save the hash of the desired line to `output_hash` array and the value of the desired entry to `output_query` array.
 
 ```python
 ################################
 
-#        Functions def         #
+#         Print output         #
 
 ################################
 
+for k in range(len_of_entry):
+    print_ln_to(0, "The %s-th letter of the query output is the following: %s", k, output_query[k].reveal_to(0))
 
-def concatenate_to_hash(tbl_l):
-    """ Concatenate an 'Array' of 'sbits'.
-
-    Note: we assume the following parameters (hardcoded)
-        lenght of tbl_l = 64
-        length of sbits = 8 (in the implementation we use sb9 
-                             as the system considers signed
-                             numbers)
-    
-    :param tbl_l: Array of sbits.
-
-    :output: A 512-`sbits` element."""
-
-    # Step 1: initialization
-    sb512 = sbits.get_type(512)
-    bits_l = []
-
-    # Step 2: concatenate the bit decoposition of all individual 
-    # elements from tbl_l
-    for i in range(0, 64):
-        # Concatenate in reversed order
-        val = tbl_l[63-i] 
-        bits_l += val.bit_decompose()[:8]
-
-    return sb512.bit_compose(bits_l)
-
-
-def compute_tbl_entry_sha256(secret):
-    """ Compute the SHA256 of secret
-    
-    :param secret: a preprocessed element to be hashed (svi512)
-                    Preprocess: padding step.
-    """
-    
-    # Step 1: import sha256 circuit
-    sha256 = Circuit('sha256')
-
-    # Step 2: initialize state variable 
-    siv256 = sbitintvec.get_type(256)
-    state = siv256(0x6a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19)
-
-    # Step 3: run circuit
-    result = sha256(secret, state)
-    res = result.elements()[0]
-
-    # Step 4: parse res as four 64-bit sint 
-    trunc_64_0 = res.TruncPr(64,0)
-    trunc_128_64 = res.TruncPr(128,64)
-    trunc_192_128 = res.TruncPr(192,128)
-    trunc_256_192 = res.TruncPr(256,192)
-
-    sint_trunc_64_0 = sint.bit_compose(sint(trunc_64_0))
-    sint_trunc_128_64 = sint.bit_compose(sint(trunc_128_64))
-    sint_trunc_192_128 = sint.bit_compose(sint(trunc_192_128))
-    sint_trunc_256_192 = sint.bit_compose(sint(trunc_256_192))
-
-    # Step 5: save truncated result to array
-    hash_array = Array(4, sint)
-    hash_array[0] = sint_trunc_64_0
-    hash_array[1] = sint_trunc_128_64
-    hash_array[2] = sint_trunc_192_128
-    hash_array[3] = sint_trunc_256_192
-
-    return hash_array
+print_ln_to(0, "hash[0:64] = %s", output_hash[0].reveal_to(0))
+print_ln_to(0, "hash[64:128] = %s", output_hash[1].reveal_to(0))
+print_ln_to(0, "hash[128:192] = %s", output_hash[2].reveal_to(0))
+print_ln_to(0, "hash[192:256] = %s", output_hash[3].reveal_to(0))
 ```
+Finally, we print only to Party 0 (cliente) the result of the query (line 332) and the output of the desired hash (lines 334-337).
 
 
 
-### C queries N (Step 2)
+### Step 2: cliente queries blockchain
+
+TODO
 
 
 
